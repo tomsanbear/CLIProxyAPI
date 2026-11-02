@@ -4,6 +4,7 @@ package management
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
 	"net/http"
@@ -47,6 +48,7 @@ type Handler struct {
 	appliedReloadGeneration uint64
 	attemptsMu              sync.Mutex
 	failedAttempts          map[string]*attemptInfo // keyed by client IP
+	verifiedKeys            verifiedKeyCache
 	authManager             *coreauth.Manager
 	tokenStore              coreauth.Store
 	localPassword           string
@@ -447,14 +449,54 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 		return true, 0, ""
 	}
 
-	if secretHash == "" || bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(provided)) != nil {
+	if secretHash == "" {
 		fail()
 		return false, http.StatusUnauthorized, "invalid management key"
 	}
+	if h.verifiedKeys.matches(secretHash, provided) {
+		reset()
+		return true, 0, ""
+	}
+	if bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(provided)) != nil {
+		fail()
+		return false, http.StatusUnauthorized, "invalid management key"
+	}
+	h.verifiedKeys.remember(secretHash, provided)
 
 	reset()
 
 	return true, 0, ""
+}
+
+// verifiedKeyCacheLimit bounds how many distinct accepted keys are remembered.
+const verifiedKeyCacheLimit = 16
+
+// verifiedKeyCache remembers management keys that already passed bcrypt verification,
+// so repeat requests do not pay the deliberately slow hash on every call. Entries store
+// only a SHA-256 digest of the key and are bound to the secret hash they were checked
+// against, so rotating the management secret invalidates them. Wrong keys always go
+// through bcrypt and the failed-attempt accounting.
+type verifiedKeyCache struct {
+	mu      sync.Mutex
+	entries map[[sha256.Size]byte]string // key digest -> secret hash it matched
+}
+
+func (c *verifiedKeyCache) matches(secretHash, provided string) bool {
+	digest := sha256.Sum256([]byte(provided))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	matched, ok := c.entries[digest]
+	return ok && subtle.ConstantTimeCompare([]byte(matched), []byte(secretHash)) == 1
+}
+
+func (c *verifiedKeyCache) remember(secretHash, provided string) {
+	digest := sha256.Sum256([]byte(provided))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil || len(c.entries) >= verifiedKeyCacheLimit {
+		c.entries = make(map[[sha256.Size]byte]string, verifiedKeyCacheLimit)
+	}
+	c.entries[digest] = secretHash
 }
 
 // persistLocked saves the current in-memory config to disk.

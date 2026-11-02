@@ -9,7 +9,72 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"golang.org/x/crypto/bcrypt"
 )
+
+func newHashedSecretHandler(t *testing.T, secret string) *Handler {
+	t.Helper()
+	hash, errHash := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.MinCost)
+	if errHash != nil {
+		t.Fatalf("hash secret: %v", errHash)
+	}
+	cfg := &config.Config{}
+	cfg.RemoteManagement.SecretKey = string(hash)
+	return &Handler{cfg: cfg, failedAttempts: make(map[string]*attemptInfo)}
+}
+
+func TestAuthenticateManagementKey_CachesVerifiedKey(t *testing.T) {
+	h := newHashedSecretHandler(t, "panel-secret")
+	secretHash := h.cfg.RemoteManagement.SecretKey
+
+	if h.verifiedKeys.matches(secretHash, "panel-secret") {
+		t.Fatalf("key must not be cached before it is verified")
+	}
+	for i := 0; i < 3; i++ {
+		if allowed, status, msg := h.AuthenticateManagementKey("127.0.0.1", true, "panel-secret"); !allowed {
+			t.Fatalf("attempt %d: expected valid key to pass, got %d %q", i+1, status, msg)
+		}
+	}
+	if !h.verifiedKeys.matches(secretHash, "panel-secret") {
+		t.Fatalf("expected verified key to be cached")
+	}
+	if h.verifiedKeys.matches(secretHash, "other-key") {
+		t.Fatalf("cache must not accept a different key")
+	}
+}
+
+func TestAuthenticateManagementKey_CachedKeyInvalidatedBySecretRotation(t *testing.T) {
+	h := newHashedSecretHandler(t, "old-secret")
+	if allowed, _, _ := h.AuthenticateManagementKey("127.0.0.1", true, "old-secret"); !allowed {
+		t.Fatalf("expected old secret to pass before rotation")
+	}
+
+	rotated := newHashedSecretHandler(t, "new-secret")
+	h.cfg = rotated.cfg
+	if allowed, status, _ := h.AuthenticateManagementKey("127.0.0.1", true, "old-secret"); allowed ||
+		status != http.StatusUnauthorized {
+		t.Fatalf("expected old secret to be rejected after rotation, got allowed=%v status=%d", allowed, status)
+	}
+	if allowed, _, _ := h.AuthenticateManagementKey("127.0.0.1", true, "new-secret"); !allowed {
+		t.Fatalf("expected new secret to pass after rotation")
+	}
+}
+
+func TestAuthenticateManagementKey_WrongKeysStillBanWithCachedKey(t *testing.T) {
+	h := newHashedSecretHandler(t, "panel-secret")
+	if allowed, _, _ := h.AuthenticateManagementKey("127.0.0.1", true, "panel-secret"); !allowed {
+		t.Fatalf("expected valid key to pass")
+	}
+	for i := 0; i < 5; i++ {
+		if allowed, _, _ := h.AuthenticateManagementKey("127.0.0.1", true, "guess"); allowed {
+			t.Fatalf("expected wrong key to be rejected at attempt %d", i+1)
+		}
+	}
+	allowed, status, msg := h.AuthenticateManagementKey("127.0.0.1", true, "panel-secret")
+	if allowed || status != http.StatusForbidden || !strings.HasPrefix(msg, "IP banned") {
+		t.Fatalf("expected ban to override the cached key, got allowed=%v status=%d msg=%q", allowed, status, msg)
+	}
+}
 
 func TestAuthenticateManagementKey_LocalhostIPBan_BlocksCorrectKeyDuringBan(t *testing.T) {
 	h := &Handler{
