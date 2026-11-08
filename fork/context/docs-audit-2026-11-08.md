@@ -1,6 +1,6 @@
 # Docs audit, 2026-11-08
 
-The proxy (commit `511ede8b`) checked against the current Anthropic docs and the Claude Code 2.1.319 binary. Findings that need work are tasks; this file records the sources, the facts the tasks rely on, and what remains unconfirmed.
+The proxy (commit `511ede8b`) checked against the current Anthropic docs and the Claude Code 2.1.319 binary. Findings we act on are tickets under `tickets/`; this file records the sources, the facts the tasks rely on, and what remains unconfirmed.
 
 ## Sources
 
@@ -39,13 +39,13 @@ The proxy (commit `511ede8b`) checked against the current Anthropic docs and the
 ## Agent claims rejected on checking
 
 - "Haiku 5.5 helper calls fail because they send `temperature: 1`." Haiku 5.5 rejects only non-default sampling values, and 1 is the default.
-- "The `server-side-fallback-2026-06-01` beta is stale." It is the correct pairing for the array form of `fallbacks` that the proxy injects. Only the `"default"` form needs `-07-01` (T10).
+- "The `server-side-fallback-2026-06-01` beta is stale." It is the correct pairing for the array form of `fallbacks` that the proxy injects. Only the `"default"` form needs `-07-01`.
 
 ## Still unconfirmed
 
-- Whether Claude Code already sends `thinking.block_binding`. If it does, the turn-2 change in T05 doesn't happen.
+- Whether Claude Code already sends `thinking.block_binding`. If it does, the turn-2 change in `stable-thinking-config` doesn't happen.
 - Whether our 7 accounts are linked for Sonnet 5.5 thinking.
-- Whether Claude Code sends `thread` by default, and the exact wording of the upstream thread-not-found error (T09).
-- Whether `fallback-credit-2026-06-01` is still accepted; the docs name `fallback-credit-2026-07-01` (T10).
+- Whether Claude Code sends `thread` by default, and the exact wording of the upstream thread-not-found error (`message-threads-affinity`).
+- Whether `fallback-credit-2026-06-01` is still accepted; the docs name `fallback-credit-2026-07-01`.
 - Whether a Claude 413 is treated as request-scoped or cools the account.
 - Whether `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` would remove the `claude-code-20250219` beta. Native detection depends on that beta, and our environment doesn't set the variable.

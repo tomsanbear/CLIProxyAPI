@@ -42,7 +42,7 @@ Most of this lives in `claude_executor_cloaking.go` and `claude_executor_request
 
 ## What the proxy changes on native requests
 
-All of these are deterministic, so they don't break the cache prefix from one turn to the next on their own. Two exceptions are tracked in [T05](../tasks/T05-stable-thinking-config.md).
+All of these are deterministic, so they don't break the cache prefix from one turn to the next on their own. Two exceptions are tracked in ticket `stable-thinking-config`.
 
 - Sets `model` to the upstream name and normalises `tool_choice` and thinking config.
 - Sanitises history (`claude_executor.go:87`): drops thinking blocks with empty or foreign signatures, strips non-Anthropic fields from `tool_use`, and rewrites non-portable tool ids.
@@ -58,6 +58,6 @@ All of these are deterministic, so they don't break the cache prefix from one tu
   - An account-wide 429 (unified 5h or 7d window rejected) cools every model on the account until the reset.
   - 5xx errors cool the model for `retry-after`, or 1 minute without it.
   - 401-403 cool the account for 30 minutes.
-- Transport errors such as DNS failures or refused connections are classed as transient and cool nothing. Within one request the conductor still skips accounts it has already tried, which is how a local network outage walks a session across accounts (see [T02](../tasks/T02-failover-rebinding.md)).
+- Transport errors such as DNS failures or refused connections are classed as transient and cool nothing. Within one request the conductor still skips accounts it has already tried, which is how a local network outage walks a session across accounts (ticket `failover-keeps-session-binding`).
 - `request-retry: 3` allows up to three more rounds. A round restarts only for 403, 408, 429 and 500-504, and only if an account recovers within `max-retry-interval`.
 - OAuth tokens refresh up to 4h before they expire. Refresh tokens are single-use.

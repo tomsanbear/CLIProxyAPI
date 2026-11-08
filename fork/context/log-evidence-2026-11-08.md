@@ -25,7 +25,7 @@ Reselections cluster in a few hours, and those hours match local network failure
 
 Over the whole period, failure reasons were 552 DNS lookups, about 36 connect timeouts or unreachable networks, a handful of broken pipes, and about 30 genuine 429 `rate_limit_error` responses.
 
-Tracing one request through the 2026-11-02 outage (request id `5bb83496`) shows the mechanism. One session went through every available account in about one second, each attempt failing on DNS, and ended up bound to whichever account it was on when the network came back. The cause is in [T02](../tasks/T02-failover-rebinding.md).
+Tracing one request through the 2026-11-02 outage (request id `5bb83496`) shows the mechanism. One session went through every available account in about one second, each attempt failing on DNS, and ended up bound to whichever account it was on when the network came back. The cause is in ticket `failover-keeps-session-binding`.
 
 ## Traffic mix
 
@@ -33,4 +33,4 @@ Requests seen by the selector in the current log: Opus 5.5 about 13,900, Fable 5
 
 ## Gaps in what the logs can show
 
-`usage-statistics-enabled` and `request-log` are both off, and nothing logs `cache_read_input_tokens` or `cache_creation_input_tokens`. The logs show when sessions move, but not the hit rate itself. [T03](../tasks/T03-cache-observability.md) covers this.
+`usage-statistics-enabled` and `request-log` are both off, and nothing logs `cache_read_input_tokens` or `cache_creation_input_tokens`. The logs show when sessions move, but not the hit rate itself. Ticket `measure-cache-hit-rate` covers this.

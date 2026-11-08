@@ -1,0 +1,81 @@
+schema_version = 1
+tickets_dir = "tickets"
+# Fork work lands on local/maintained; main mirrors upstream.
+default_base = "local/maintained"
+
+[guard]
+# A declared-area overlap with an open sibling is a non-failing WARN by default
+# (exit 0); an under-declaration (scope escape) always fails (exit 6). Set true
+# (or pass `guard --strict`) to make an overlap gate too.
+# gate_collisions = false
+
+# Defaults are written into ticket frontmatter; explicit exclusive scopes win.
+[defaults]
+shared_scopes = ["project/tickets"]
+# Written into new tickets (and claimed tickets missing a watch key).
+# Explicit watch = [] opts out.
+# watch = [{ on = "done", of = "dependencies", reason = "Re-read if a dependency changed what this assumed." }]
+
+[output]
+# Detail commands show full threads; collections show counts. Comment reads
+# union this worktree with the matching tkt/<id> branch by default.
+comments = "auto"
+comment_source = "all"
+
+[language]
+# "none" = path-glob scopes only; "rust" = also expand via the cargo crate graph.
+backend = "none"
+
+# Map abstract scope names to path globs. Tickets reference these stable names.
+[scopes]
+"project/tickets" = ["tickets/**", "ticketsplease.toml", ".ticketsplease/**"]
+"fork/docs" = ["FORK.md", "fork/**"]
+"routing/affinity" = [
+  "sdk/cliproxy/auth/selector*.go",
+  "sdk/cliproxy/auth/session_cache*.go",
+  "sdk/cliproxy/auth/session_affinity_*.go",
+  "sdk/cliproxy/auth/session_resolver.go",
+  "sdk/cliproxy/auth/quota_signals*.go",
+  "sdk/cliproxy/session/**",
+  "sdk/cliproxy/service_config*.go",
+]
+"routing/conductor" = [
+  "sdk/cliproxy/auth/conductor*.go",
+  "sdk/cliproxy/auth/cooldown_*.go",
+  "sdk/cliproxy/auth/classification*.go",
+  "sdk/cliproxy/auth/errors*.go",
+  "sdk/cliproxy/auth/error_events*.go",
+  "sdk/cliproxy/auth/scheduler*.go",
+  "sdk/cliproxy/auth/trusted_retry_after_test.go",
+  "sdk/cliproxy/auth/retry_deadline_test.go",
+  "sdk/cliproxy/auth/connection_lifecycle_cooldown_test.go",
+  "sdk/cliproxy/auth/claude_ratelimit_cooldown_test.go",
+]
+"claude/executor" = ["internal/runtime/executor/claude_*.go"]
+"claude/helpers" = ["internal/runtime/executor/helps/claude_*"]
+"usage" = ["internal/runtime/executor/helps/usage_*.go", "sdk/cliproxy/usage/**"]
+"clienterror" = ["internal/clienterror/**"]
+"config" = ["internal/config/**", "config.example.yaml"]
+
+# Optionally map a scope to its owning crate so the Rust backend can expand
+# reverse-dependents (requires `cargo` at runtime).
+[scope_crates]
+# "core" = "my-core-crate"
+
+# Name a forked/external dependency (pinned via `git = … rev = …`) as a scope.
+# The guard flags a branch that bumps the pin (matched by `repo`) or edits an
+# in-tree fork `paths` glob, against tickets declaring the same scope.
+[external_scopes]
+# "sqlparser-fork" = { repo = "tomsanbear/sqlparser", paths = [] }
+
+# Tune how costly an exclusive overlap on a scope is for tracks/next
+# (--max-overlap): weight 0 = free to co-edit (an additive hub), higher =
+# riskier. Default 1; a shared-by-both claim is always free.
+[scope_policy]
+# "core" = { weight = 0 }
+
+# Opt-in coupling cost for a `related` link. Default 0 = related stays
+# invisible to tracks/next/lanes/why (queryable/graphable only; never gates
+# ready or cycle detection). A positive value is gated by --max-overlap.
+[scheduler]
+# related_weight = 0
