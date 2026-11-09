@@ -13,7 +13,8 @@ One directory, `archive.spool-dir` in the proxy config. It contains:
 | `seg-<seq>.wal` | proxy | A completed segment. Immutable once it has this name. |
 | `seg-<seq>.wal.open` | proxy | The segment being written. At most one exists while the proxy runs. |
 | `spool.lock` | proxy | Advisory lock (`flock`, exclusive, non-blocking) held for the writer's lifetime. |
-| `archiver-status.json` | archiver | Health for the management panel. Replaced atomically (write temp, rename). |
+
+The archiver may keep its own state files in the directory under names starting with `archiver-`; the writer ignores them. Their contents are not part of this contract.
 
 `<seq>` is a decimal `u64`, zero-padded to 12 digits, strictly increasing by one per segment: `seg-000000000001.wal`. Names sort lexicographically in sequence order. The directory listing is the only index; there is no catalogue file.
 
@@ -25,7 +26,7 @@ There is exactly one writer and one reader per spool directory. The writer takes
 2. Frames are appended to the open segment. The writer may buffer in memory, but every frame is written whole: a frame's bytes are never split across a flush boundary.
 3. The segment rolls when its size reaches `archive.segment-max-bytes` (default 64 MiB) or when `archive.segment-max-age` (default 15 minutes) has passed since its first frame. Rolling means: flush, `fsync` the file, rename `seg-<seq>.wal.open` to `seg-<seq>.wal`, `fsync` the directory.
 4. A clean shutdown rolls the open segment the same way.
-5. At start, if a `seg-<seq>.wal.open` exists (the previous process crashed), the writer rolls it before creating a new segment. Its tail may hold a truncated frame; see §6.
+5. At start, if a `seg-<seq>.wal.open` exists (the previous process crashed), the writer rolls it before creating a new segment: `fsync` the file, rename, `fsync` the directory, exactly as in step 3. Its tail may hold a truncated frame; see §6.
 
 The reader considers only `seg-<seq>.wal` files. It never reads, deletes or renames a `.wal.open` file.
 
@@ -40,10 +41,9 @@ Unlinking a file the reader has open is safe on the supported platforms (macOS, 
 ## 4. Reader rules
 
 - Drain completed segments in ascending sequence order.
-- If more than `high-water` completed segments exist (default 12), drain in descending order until the count is back under the mark, then resume ascending. Under pressure the newest segments carry the most history.
-- Process a whole segment, make its rows durable (uploaded and confirmed), then unlink it. A crash between upload and unlink causes the segment to be processed again; the archive writer therefore deduplicates rows by `(request_id, attempt)`.
-- Do not rely on processing order for archive layout: rows are partitioned by their own `ts`.
-- After each confirmed segment, rewrite `archiver-status.json` (§8).
+- Process a whole segment, make its rows durable (uploaded and confirmed), then unlink it. A crash between upload and unlink causes the segment to be processed again, so the archive output for a segment must be idempotent: derive the output object names from the segment sequence (and the writer host), so a replay overwrites the same objects instead of adding rows.
+- `(request_id, attempt)` is unique across the whole WAL and may be used as a row key downstream.
+- Do not rely on processing order for archive layout: rows carry their own `ts`.
 
 ## 5. Frame
 
@@ -60,22 +60,22 @@ A segment is a sequence of frames with no file header and no padding. Every fram
 | 16 | 4 | `crc32c` | CRC-32C (Castagnoli) of the payload bytes as stored |
 | 20 | `payload_len` | `payload` | the record (§6), compressed per `flags` |
 
-The header is 20 bytes in every version, and bytes 0–11 (`magic`, `version`, `flags`, `reserved`, `payload_len`) keep their meaning in every version, so a reader can always skip a frame whose version it does not understand.
+The header is 20 bytes in every version, and bytes 0–11 (`magic`, `version`, `flags`, `reserved`, `payload_len`) keep their meaning in every version, so a reader can always skip a frame whose version it does not understand. Readers ignore `flags` bits they do not know and treat `reserved` as opaque.
 
 Version 1 writers always compress with zstd (`flags` bit 0 = 1), one independent zstd frame per WAL frame, with the zstd content checksum enabled. Per-frame compression costs some ratio against a single stream but means a truncated or corrupt frame never affects its neighbours, and a reader can decode any frame without state.
 
-Limits: `payload_len` ≤ 128 MiB, `record_len` ≤ 256 MiB. A reader rejects frames beyond these as corrupt.
+Limits: `payload_len` ≤ 128 MiB, `record_len` ≤ 256 MiB. Writers never produce frames beyond these. A reader treats a `payload_len` over the limit as corruption of the header (§6 step 2, since it can no longer trust the length to skip by) and a `record_len` over the limit as a bad record (§6 step 6).
 
 ## 6. Reading a segment, including damage
 
 The reader walks frames from offset 0:
 
 1. Fewer than 20 bytes remain: the segment ends. If more than 0 bytes remain this is a **truncated tail**; count it and stop. This is the normal result of a crash mid-write and is not an error.
-2. `magic` mismatch: the segment is **corrupt** from this point. Count it and stop; frames read so far are valid. (Bytes before a valid header are never scanned for a later magic.)
+2. `magic` mismatch, or `payload_len` over its limit: the segment is **corrupt** from this point. Count it and stop; frames read so far are valid. (Bytes before a valid header are never scanned for a later magic.)
 3. `version` unknown: skip `payload_len` bytes, count `unknown_version`, continue.
 4. Fewer than `payload_len` bytes remain: truncated tail; count and stop.
 5. `crc32c` mismatch: skip the payload, count `crc_mismatch`, continue.
-6. Decompress per `flags`; if the result's length differs from `record_len`, or decompression fails: skip, count `bad_record`, continue.
+6. `record_len` over its limit, decompression failure, or a decompressed length that differs from `record_len`: skip, count `bad_record`, continue.
 7. Unpack the record (§7); a record that does not unpack is counted as `bad_record` and skipped.
 
 Readers report these counts; the archiver surfaces them in `archiver-status.json`. Tests compare **decoded** records, never compressed bytes, because zstd output differs between encoders and versions.
@@ -95,7 +95,7 @@ The decompressed payload is three length-prefixed sections:
 
 `record_len` = 12 + `meta_len` + `request_len` + `response_len`.
 
-"After transport decoding" means: if the client sent the body with `Content-Encoding: zstd` or `gzip`, the stored request is the decoded body; if the proxy compressed the response to the client, the stored response is the bytes before compression. Streaming responses are stored as the SSE text the client received, including any `event: error` frame the proxy synthesized.
+"After transport decoding" means: if the client sent the body with `Content-Encoding: zstd` or `gzip`, the stored request is the decoded body; if the proxy compressed the response to the client, the stored response is the bytes before compression. The response section is every byte the proxy wrote to the client's response body for this request, in order: for streams that is the SSE text including keep-alive comment lines (`: keep-alive`) and any `event: error` frame the proxy synthesized; for errors it is the error JSON. The writer captures it with one response-writer wrapper, so no write path is missed and a client-side capture can be compared byte-for-byte.
 
 ### 7.1 Meta
 
@@ -136,6 +136,7 @@ One JSON object per record. Keys not listed here may appear in later versions; r
   },
   "outcome": {
     "status": 200,
+    "upstream_status": 200,
     "failed": false,
     "error_code": "",
     "error_message": "",
@@ -173,12 +174,12 @@ One JSON object per record. Keys not listed here may appear in later versions; r
 
 Field notes:
 
-- `request_id` is the proxy's per-request id (the gin request id, `TraceID` in usage records). `attempt` is the 1-based upstream attempt; a request that fails over writes one record per attempt, all with the same `request_id`. `(request_id, attempt)` is unique.
-- `ts` is when the proxy received the request; `completed_at` is when the response to the client finished (or the attempt failed).
-- `client.headers` holds every inbound header except credentials, as lists of values with lower-case names. Credentials are `authorization`, `x-api-key`, `cookie`, `proxy-authorization` and the proxy access-key header; they are never stored. `caller_key_sha256` is the hex SHA-256 of the access key the client presented, or empty.
+- `request_id` is the proxy's per-request id (a UUID; the gin request id, `TraceID` in usage records). `attempt` is the 1-based upstream attempt, numbered by the writer in the order the proxy's usage records for that request arrive; a request that fails over writes one record per attempt, all with the same `request_id`. `(request_id, attempt)` is unique. A request that fails before any upstream attempt (for example a 400 from request validation) writes a single record with `attempt` 1 and all-zero `usage`.
+- `ts` is when the proxy received the request and is the same on every attempt of that request; `completed_at` is when this attempt's response to the client finished, or when the attempt failed. An attempt's own start time is `completed_at - latency_ms`.
+- `client.headers` holds every inbound header except credentials, as lists of values with lower-case names; it is an object, never `null`, and empty when there are none. Credentials are `authorization`, `x-api-key`, `cookie`, `proxy-authorization` and the proxy access-key header; they are never stored. `caller_key_sha256` is the hex SHA-256 of the access key the client presented, or empty.
 - `session.*` are the identities the proxy already derives for affinity routing; `native` is whether the request was confirmed as a native Claude Code request and passed through without cloaking.
 - `route.account_id` is the proxy's auth id (the credential file name) of the account that served the attempt; empty when no account was selected.
-- `outcome.status` is the HTTP status delivered to the client for this attempt (`0` when the attempt failed before a status existed). `stop_reason` is copied from the response when the format exposes one.
+- `outcome.status` is the HTTP status delivered to the client for this attempt (`0` when the attempt produced no client response, as for a failed attempt that was followed by another). `outcome.upstream_status` is the HTTP status the upstream returned for this attempt (`0` when there was no upstream response, for example a transport error), so a 429-then-200 failover reads as `(0, 429)` then `(200, 200)`. `failed`, `error_code` and `error_message` come from the proxy's classification of the attempt. `stop_reason` is copied from the response when the format exposes one.
 - `usage.*` come from the proxy's usage record for the attempt; all `0` when none was produced.
 - `request.format` is the inbound API format as the proxy classified it: `claude`, `openai-chat`, `openai-responses`, `gemini`, `interactions`, or `unknown`. The archiver's splitter trusts this field and does not guess.
 - `response.kind` is `sse`, `json`, `bytes` or `none`.
@@ -188,26 +189,28 @@ Field notes:
 
 A record whose bodies together exceed `archive.max-record-bytes` (default 64 MiB) is still written, with the larger body first and then both bodies replaced by empty sections until the record fits, setting `omitted: true` and `omitted_reason: "oversize"` on each omitted body. The turn's existence and metadata are never lost to size.
 
-## 8. Archiver status file
+## 8. Configuration
 
-`archiver-status.json`, written by the archiver after each confirmed segment and at least once a minute while running:
+Both programs read the proxy's `config.yaml`. The archive settings are a top-level `archive` section (not nested under `observability`), with these keys and nothing else the archiver depends on:
 
-```json
-{
-  "v": 1,
-  "updated_at": "…",
-  "archiver_version": "0.1.0",
-  "last_segment": 1234,
-  "completed_segments": 2,
-  "frames_read": 918233,
-  "frames_bad": { "truncated_tail": 1, "unknown_version": 0, "crc_mismatch": 0, "bad_record": 0, "corrupt_segments": 0 },
-  "last_upload_at": "…",
-  "last_error": "",
-  "last_error_at": ""
-}
+```yaml
+archive:
+  enabled: true
+  spool-dir: "/Users/me/.local/share/cliproxyapi/archive-spool"   # absolute path
+  segment-max-bytes: 67108864        # integer bytes; default 64 MiB
+  segment-max-age: "15m"             # <integer><s|m|h>; default 15m
+  ring-segments: 16                  # integer; default 16
+  max-record-bytes: 67108864         # integer bytes; default 64 MiB
+  r2:
+    endpoint: "https://<account-id>.r2.cloudflarestorage.com"
+    bucket: "agent-archive"
+    prefix: "v1"                     # optional, no leading or trailing slash
+    access-key-id: "…"
+    secret-access-key: "…"
+    sse-c-key: "…"                   # base64 of 32 random bytes; optional, SSE-C is off when absent
 ```
 
-The proxy's management panel shows this file next to its own writer counters (frames written, bytes written, segments dropped, frames dropped, ring depth).
+Rules: keys are exactly as written (no alternative spellings); `segment-max-age` is an integer followed by `s`, `m` or `h`; byte sizes are plain integers; the proxy reads everything except `r2`, which it validates for shape only; the archiver reads `spool-dir` and `r2` and ignores the rest. The archiver also accepts `--spool-dir` and the `r2` values as flags or environment variables for use without a proxy config, with the same names in upper snake case (`ARCHIVE_R2_BUCKET`).
 
 ## 9. Versioning
 
@@ -225,6 +228,8 @@ The proxy's management panel shows this file next to its own writer counters (fr
 | `seg-000000000002.wal` | A 429 attempt followed by the successful attempt 2 of the same request, a Responses API turn, then a frame cut mid-payload (truncated tail). |
 | `seg-000000000003.wal` | A valid frame, a frame with version 99, a frame with a wrong CRC, a valid frame. Readers yield two records and count one of each skip. |
 | `seg-000000000004.wal.open` | An in-progress segment; readers ignore it. |
+| `seg-000000000005.wal` | A valid frame, a frame whose `record_len` disagrees with its payload (bad record), a valid frame, then a header with `payload_len` over the limit followed by a valid frame. Readers yield two records, count one bad record, and stop as corrupt without reading the last frame. |
+| `seg-000000000006.wal` | Bytes that do not start with the magic. Readers yield nothing and report corrupt. |
 | `manifest.json` | For each `.wal`: the expected counts and, per decoded record, `request_id`, `attempt`, `request.format`, and SHA-256 of the meta, request and response sections. |
 
 All bodies are synthetic. The fixtures are regenerated only by the Go test suite (`UPDATE_ARCHIVE_FIXTURES=1 go test ./internal/archive`), and a regeneration is a format change that must be mirrored into the archiver repository in the same change.

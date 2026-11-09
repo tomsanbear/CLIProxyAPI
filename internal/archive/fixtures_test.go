@@ -2,6 +2,7 @@ package archive
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -183,6 +184,17 @@ func writeFixtures(t *testing.T) {
 	// seg 4: in progress; readers ignore it.
 	write("seg-000000000004.wal.open", encode(fx.gemini))
 
+	// seg 5: a bad record (record_len disagrees), then a header whose payload_len
+	// is over the limit, which ends the segment as corrupt before the last frame.
+	badRecord := encode(fx.openAIChat)
+	binary.LittleEndian.PutUint32(badRecord[12:16], binary.LittleEndian.Uint32(badRecord[12:16])+1)
+	oversized := encode(fx.gemini)
+	binary.LittleEndian.PutUint32(oversized[8:12], MaxPayloadLen+1)
+	write("seg-000000000005.wal", encode(fx.claudeNative), badRecord, encode(fx.responses), oversized, encode(fx.claudeNative))
+
+	// seg 6: at least a header's worth of bytes that do not start with the magic.
+	write("seg-000000000006.wal", []byte("this is not a wal segment at all\n"))
+
 	sort.Strings(manifest.Ignored)
 	out, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -266,7 +278,7 @@ func newFixtureRecords() fixtureRecords {
 	claudeMeta.Client.Headers["x-claude-code-session-id"] = []string{"3f2e1d0c-aaaa-4bbb-8ccc-000000000001"}
 	claudeMeta.Session = MetaSession{SessionID: "claude:3f2e1d0c-aaaa-4bbb-8ccc-000000000001", ClientType: "claude", Native: true}
 	claudeMeta.Route = MetaRoute{Provider: "claude", RequestedModel: "claude-opus-5-5", UpstreamModel: "claude-opus-5-5", AccountID: "claude-00000000-fixture@example.com.json", AuthType: "oauth", BaseURL: "https://api.anthropic.com"}
-	claudeMeta.Outcome = MetaOutcome{Status: 200, StopReason: "end_turn", LatencyMS: 1878, TTFTMS: 412}
+	claudeMeta.Outcome = MetaOutcome{Status: 200, UpstreamStatus: 200, StopReason: "end_turn", LatencyMS: 1878, TTFTMS: 412}
 	claudeMeta.Usage = MetaUsage{InputTokens: 12, OutputTokens: 9, CacheReadTokens: 1480, CacheCreationTokens: 230, CacheCreation1hTokens: 230}
 	fx.claudeNative = record(claudeMeta, claudeRequest, claudeSSE, "claude", "sse", "text/event-stream")
 
@@ -275,7 +287,7 @@ func newFixtureRecords() fixtureRecords {
 	chatMeta.Client.UserAgent = "fixture-sdk/1.0"
 	chatMeta.Session = MetaSession{SessionID: "derived:ctx:v1:" + strings.Repeat("ab", 32), ClientType: "lcp"}
 	chatMeta.Route = MetaRoute{Provider: "claude", RequestedModel: "claude-sonnet-5-5", UpstreamModel: "claude-sonnet-5-5", AccountID: "claude-00000000-fixture@example.com.json", AuthType: "oauth", BaseURL: "https://api.anthropic.com"}
-	chatMeta.Outcome = MetaOutcome{Status: 200, StopReason: "stop", LatencyMS: 1250, TTFTMS: 1250}
+	chatMeta.Outcome = MetaOutcome{Status: 200, UpstreamStatus: 200, StopReason: "stop", LatencyMS: 1250, TTFTMS: 1250}
 	chatMeta.Usage = MetaUsage{InputTokens: 31, OutputTokens: 7}
 	fx.openAIChat = record(chatMeta, openAIChatRequest, openAIChatResponse, "openai-chat", "json", "application/json")
 
@@ -284,7 +296,7 @@ func newFixtureRecords() fixtureRecords {
 	geminiMeta.Client.UserAgent = "fixture-gemini-cli/0.1"
 	geminiMeta.Session = MetaSession{SessionID: "derived:ctx:v1:" + strings.Repeat("cd", 32), ClientType: "lcp"}
 	geminiMeta.Route = MetaRoute{Provider: "gemini", RequestedModel: "gemini-2.5-pro", UpstreamModel: "gemini-2.5-pro", AccountID: "gemini-fixture.json", AuthType: "oauth", BaseURL: "https://generativelanguage.googleapis.com"}
-	geminiMeta.Outcome = MetaOutcome{Status: 200, StopReason: "STOP", LatencyMS: 900, TTFTMS: 900}
+	geminiMeta.Outcome = MetaOutcome{Status: 200, UpstreamStatus: 200, StopReason: "STOP", LatencyMS: 900, TTFTMS: 900}
 	geminiMeta.Usage = MetaUsage{InputTokens: 14, OutputTokens: 5}
 	fx.gemini = record(geminiMeta, geminiRequest, geminiResponse, "gemini", "json", "application/json")
 
@@ -294,7 +306,7 @@ func newFixtureRecords() fixtureRecords {
 	responsesMeta.Client.Headers["session_id"] = []string{"019a0000-0000-7000-8000-000000000004"}
 	responsesMeta.Session = MetaSession{SessionID: "codex:019a0000-0000-7000-8000-000000000004", ClientType: "codex"}
 	responsesMeta.Route = MetaRoute{Provider: "codex", RequestedModel: "gpt-5.1-codex", UpstreamModel: "gpt-5.1-codex", AccountID: "codex-fixture.json", AuthType: "oauth", BaseURL: "https://chatgpt.com/backend-api"}
-	responsesMeta.Outcome = MetaOutcome{Status: 200, StopReason: "completed", LatencyMS: 2000, TTFTMS: 300}
+	responsesMeta.Outcome = MetaOutcome{Status: 200, UpstreamStatus: 200, StopReason: "completed", LatencyMS: 2000, TTFTMS: 300}
 	responsesMeta.Usage = MetaUsage{InputTokens: 20, OutputTokens: 6, ReasoningTokens: 4}
 	fx.responses = record(responsesMeta, responsesRequest, responsesSSE, "openai-responses", "sse", "text/event-stream")
 
@@ -304,7 +316,7 @@ func newFixtureRecords() fixtureRecords {
 	rlMeta.Client.Headers["x-claude-code-session-id"] = []string{"3f2e1d0c-aaaa-4bbb-8ccc-000000000005"}
 	rlMeta.Session = MetaSession{SessionID: "claude:3f2e1d0c-aaaa-4bbb-8ccc-000000000005", ClientType: "claude", Native: true}
 	rlMeta.Route = MetaRoute{Provider: "claude", RequestedModel: "claude-opus-5-5", UpstreamModel: "claude-opus-5-5", AccountID: "claude-11111111-fixture-a@example.com.json", AuthType: "oauth", BaseURL: "https://api.anthropic.com"}
-	rlMeta.Outcome = MetaOutcome{Status: 0, Failed: true, ErrorCode: "rate_limit_error", ErrorMessage: "This request would exceed your account's rate limit. Please try again later.", LatencyMS: 150}
+	rlMeta.Outcome = MetaOutcome{Status: 0, UpstreamStatus: 429, Failed: true, ErrorCode: "rate_limit_error", ErrorMessage: "This request would exceed your account's rate limit. Please try again later.", LatencyMS: 150}
 	fx.rateLimited = record(rlMeta, claudeRequest, "", "claude", "none", "")
 
 	retryMeta := rlMeta
@@ -312,7 +324,7 @@ func newFixtureRecords() fixtureRecords {
 	retryMeta.TS = "2026-11-09T18:08:00.000000000Z"
 	retryMeta.CompletedAt = "2026-11-09T18:08:02.400000000Z"
 	retryMeta.Route.AccountID = "claude-22222222-fixture-b@example.com.json"
-	retryMeta.Outcome = MetaOutcome{Status: 200, StopReason: "end_turn", LatencyMS: 2250, TTFTMS: 500}
+	retryMeta.Outcome = MetaOutcome{Status: 200, UpstreamStatus: 200, StopReason: "end_turn", LatencyMS: 2250, TTFTMS: 500}
 	retryMeta.Usage = MetaUsage{InputTokens: 12, OutputTokens: 9, CacheCreationTokens: 1710, CacheCreation1hTokens: 1710}
 	fx.rateLimitedRetry = record(retryMeta, claudeRequest, claudeSSE, "claude", "sse", "text/event-stream")
 

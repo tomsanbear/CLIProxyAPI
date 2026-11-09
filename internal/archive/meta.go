@@ -51,13 +51,14 @@ type MetaRoute struct {
 
 // MetaOutcome is the result delivered to the client for the attempt.
 type MetaOutcome struct {
-	Status       int    `json:"status"`
-	Failed       bool   `json:"failed"`
-	ErrorCode    string `json:"error_code"`
-	ErrorMessage string `json:"error_message"`
-	StopReason   string `json:"stop_reason"`
-	LatencyMS    int64  `json:"latency_ms"`
-	TTFTMS       int64  `json:"ttft_ms"`
+	Status         int    `json:"status"`
+	UpstreamStatus int    `json:"upstream_status"`
+	Failed         bool   `json:"failed"`
+	ErrorCode      string `json:"error_code"`
+	ErrorMessage   string `json:"error_message"`
+	StopReason     string `json:"stop_reason"`
+	LatencyMS      int64  `json:"latency_ms"`
+	TTFTMS         int64  `json:"ttft_ms"`
 }
 
 // MetaUsage is the token accounting from the proxy's usage record.
