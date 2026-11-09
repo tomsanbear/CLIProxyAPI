@@ -37,6 +37,7 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if strings.TrimSpace(oldCfg.Pprof.Addr) != strings.TrimSpace(newCfg.Pprof.Addr) {
 		changes = append(changes, fmt.Sprintf("pprof.addr: %s -> %s", strings.TrimSpace(oldCfg.Pprof.Addr), strings.TrimSpace(newCfg.Pprof.Addr)))
 	}
+	changes = appendArchiveConfigChanges(changes, oldCfg.Archive, newCfg.Archive)
 	if oldCfg.LoggingToFile != newCfg.LoggingToFile {
 		changes = append(changes, fmt.Sprintf("logging-to-file: %t -> %t", oldCfg.LoggingToFile, newCfg.LoggingToFile))
 	}
@@ -687,6 +688,60 @@ func equalStringMap(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// appendArchiveConfigChanges reports archive section changes. The archive writer
+// reads the section only at start, so its settings apply on restart. The r2
+// settings belong to cliproxyapi-archiver; credentials are never printed.
+func appendArchiveConfigChanges(changes []string, oldArchive, newArchive config.ArchiveConfig) []string {
+	const onRestart = " (applies on restart)"
+	if oldArchive.Enabled != newArchive.Enabled {
+		changes = append(changes, fmt.Sprintf("archive.enabled: %t -> %t"+onRestart, oldArchive.Enabled, newArchive.Enabled))
+	}
+	if oldArchive.SpoolDir != newArchive.SpoolDir {
+		changes = append(changes, fmt.Sprintf("archive.spool-dir: %s -> %s"+onRestart, displayOptionalValue(oldArchive.SpoolDir), displayOptionalValue(newArchive.SpoolDir)))
+	}
+	if oldArchive.SegmentMaxBytes != newArchive.SegmentMaxBytes {
+		changes = append(changes, fmt.Sprintf("archive.segment-max-bytes: %d -> %d"+onRestart, oldArchive.SegmentMaxBytes, newArchive.SegmentMaxBytes))
+	}
+	if oldArchive.SegmentMaxAge != newArchive.SegmentMaxAge {
+		changes = append(changes, fmt.Sprintf("archive.segment-max-age: %s -> %s"+onRestart, displayOptionalValue(oldArchive.SegmentMaxAge), displayOptionalValue(newArchive.SegmentMaxAge)))
+	}
+	if oldArchive.RingSegments != newArchive.RingSegments {
+		changes = append(changes, fmt.Sprintf("archive.ring-segments: %d -> %d"+onRestart, oldArchive.RingSegments, newArchive.RingSegments))
+	}
+	if oldArchive.MaxRecordBytes != newArchive.MaxRecordBytes {
+		changes = append(changes, fmt.Sprintf("archive.max-record-bytes: %d -> %d"+onRestart, oldArchive.MaxRecordBytes, newArchive.MaxRecordBytes))
+	}
+	oldR2, newR2 := oldArchive.R2, newArchive.R2
+	if oldR2.Endpoint != newR2.Endpoint {
+		changes = append(changes, fmt.Sprintf("archive.r2.endpoint: %s -> %s", formatURL(oldR2.Endpoint), formatURL(newR2.Endpoint)))
+	}
+	if oldR2.Bucket != newR2.Bucket {
+		changes = append(changes, fmt.Sprintf("archive.r2.bucket: %s -> %s", displayOptionalValue(oldR2.Bucket), displayOptionalValue(newR2.Bucket)))
+	}
+	if oldR2.Prefix != newR2.Prefix {
+		changes = append(changes, fmt.Sprintf("archive.r2.prefix: %s -> %s", displayOptionalValue(oldR2.Prefix), displayOptionalValue(newR2.Prefix)))
+	}
+	changes = appendSecretChange(changes, "archive.r2.access-key-id", oldR2.AccessKeyID, newR2.AccessKeyID)
+	changes = appendSecretChange(changes, "archive.r2.secret-access-key", oldR2.SecretAccessKey, newR2.SecretAccessKey)
+	changes = appendSecretChange(changes, "archive.r2.sse-c-key", oldR2.SSECKey, newR2.SSECKey)
+	return changes
+}
+
+// appendSecretChange reports that a credential was created, deleted or
+// updated without printing either value.
+func appendSecretChange(changes []string, field, oldValue, newValue string) []string {
+	switch {
+	case oldValue == newValue:
+		return changes
+	case oldValue == "":
+		return append(changes, field+": created")
+	case newValue == "":
+		return append(changes, field+": deleted")
+	default:
+		return append(changes, field+": updated")
+	}
 }
 
 func displayOptionalValue(raw string) string {

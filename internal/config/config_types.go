@@ -419,6 +419,40 @@ type PprofConfig struct {
 	Addr string `yaml:"addr" json:"addr"`
 }
 
+// ArchiveConfig configures the conversation archive write-ahead log, as
+// specified in section 8 of docs/archive-wal-format.md. The section stays at the
+// top level in every layout because cliproxyapi-archiver reads the same keys.
+// The writer reads it at start; changes apply on restart.
+type ArchiveConfig struct {
+	// Enabled starts the archive WAL writer.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// SpoolDir is the absolute spool directory. Empty means <auth-dir>/archive-spool.
+	SpoolDir string `yaml:"spool-dir" json:"spool-dir"`
+	// SegmentMaxBytes rolls the open segment once it holds this many bytes.
+	SegmentMaxBytes int64 `yaml:"segment-max-bytes" json:"segment-max-bytes"`
+	// SegmentMaxAge rolls the open segment this long after its first frame,
+	// written as an integer followed by s, m or h.
+	SegmentMaxAge string `yaml:"segment-max-age" json:"segment-max-age"`
+	// RingSegments bounds the number of completed segments kept on disk.
+	RingSegments int `yaml:"ring-segments" json:"ring-segments"`
+	// MaxRecordBytes caps the combined request and response body bytes stored per record.
+	MaxRecordBytes int64 `yaml:"max-record-bytes" json:"max-record-bytes"`
+	// R2 holds the archiver's object storage settings. The proxy validates
+	// their shape only and never logs them.
+	R2 ArchiveR2Config `yaml:"r2" json:"r2"`
+}
+
+// ArchiveR2Config is the Cloudflare R2 destination used by cliproxyapi-archiver.
+type ArchiveR2Config struct {
+	Endpoint    string `yaml:"endpoint" json:"endpoint"`
+	Bucket      string `yaml:"bucket" json:"bucket"`
+	Prefix      string `yaml:"prefix" json:"prefix"`
+	AccessKeyID string `yaml:"access-key-id" json:"access-key-id"`
+	// SecretAccessKey and SSECKey are secrets: hidden from JSON and never logged.
+	SecretAccessKey string `yaml:"secret-access-key" json:"-"`
+	SSECKey         string `yaml:"sse-c-key" json:"-"`
+}
+
 // DiscoveryInterfacesConfig specifies interface inclusion and exclusion rules.
 type DiscoveryInterfacesConfig struct {
 	Include []string `yaml:"include" json:"include"`

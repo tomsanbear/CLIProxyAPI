@@ -76,6 +76,10 @@ type Service struct {
 	// discoveryManager manages local network mDNS / DNS-SD service advertising.
 	discoveryManager *discoveryAdvertiserManager
 
+	// archive runs the conversation archive WAL writer when archive.enabled.
+	archiveMu sync.Mutex
+	archive   *archiveRuntime
+
 	// serverErr channel for server startup/shutdown errors.
 	serverErr chan error
 

@@ -443,6 +443,8 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 			return node.Value == "plugins"
 		case "routing.strategy":
 			return node.Value == "round-robin"
+		case "archive.segment-max-age":
+			return node.Value == DefaultArchiveSegmentMaxAge
 		}
 	}
 
@@ -453,6 +455,12 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 			return node.Value == "10"
 		case "claude.session-date-pin-days":
 			return node.Value == strconv.Itoa(DefaultClaudeSessionDatePinDays)
+		case "archive.segment-max-bytes":
+			return node.Value == strconv.FormatInt(DefaultArchiveSegmentMaxBytes, 10)
+		case "archive.ring-segments":
+			return node.Value == strconv.Itoa(DefaultArchiveRingSegments)
+		case "archive.max-record-bytes":
+			return node.Value == strconv.FormatInt(DefaultArchiveMaxRecordBytes, 10)
 		}
 	}
 

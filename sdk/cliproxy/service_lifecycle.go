@@ -57,6 +57,7 @@ func (s *Service) Run(ctx context.Context) error {
 	s.startModelCatalogUpdaters(ctx)
 
 	usage.StartDefault(ctx)
+	s.startArchive()
 	cfg := s.currentConfig()
 	homeEnabled := cfg != nil && cfg.Home.Enabled
 	if homeEnabled {
@@ -391,6 +392,13 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		}
 
 		helps.RetireProxyPoolPublisher(s.proxyPoolPublisher)
+		// The API server has stopped, so no request is still appending to the archive.
+		if errStopArchive := s.stopArchive(); errStopArchive != nil {
+			log.Errorf("failed to close archive writer: %v", errStopArchive)
+			if shutdownErr == nil {
+				shutdownErr = errStopArchive
+			}
+		}
 		usage.StopDefault()
 	})
 	return shutdownErr

@@ -16,12 +16,18 @@ func ResolvePluginsDir(pluginsDir string) (string, error) {
 	if pluginsDir == "" {
 		pluginsDir = defaultPluginsDir
 	}
-	if strings.HasPrefix(pluginsDir, "~") {
+	return expandHomePath(pluginsDir, "plugins directory")
+}
+
+// expandHomePath expands a leading tilde (~) to the user's home directory and
+// returns a cleaned path. what names the setting in the error.
+func expandHomePath(path, what string) (string, error) {
+	if strings.HasPrefix(path, "~") {
 		homeDir, errUserHomeDir := os.UserHomeDir()
 		if errUserHomeDir != nil {
-			return "", fmt.Errorf("resolve plugins directory: %w", errUserHomeDir)
+			return "", fmt.Errorf("resolve %s: %w", what, errUserHomeDir)
 		}
-		remainder := strings.TrimPrefix(pluginsDir, "~")
+		remainder := strings.TrimPrefix(path, "~")
 		remainder = strings.TrimLeft(remainder, "/\\")
 		if remainder == "" {
 			return filepath.Clean(homeDir), nil
@@ -29,7 +35,7 @@ func ResolvePluginsDir(pluginsDir string) (string, error) {
 		normalized := strings.ReplaceAll(remainder, "\\", "/")
 		return filepath.Clean(filepath.Join(homeDir, filepath.FromSlash(normalized))), nil
 	}
-	return filepath.Clean(pluginsDir), nil
+	return filepath.Clean(path), nil
 }
 
 // ResolvePluginsDir resolves and stores the effective plugin directory.

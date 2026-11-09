@@ -35,6 +35,7 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	cfg.WebsocketAuth = true
 	cfg.Pprof.Enable = false
 	cfg.Pprof.Addr = DefaultPprofAddr
+	cfg.Archive = DefaultArchiveConfig()
 	cfg.Discovery.Enabled = false
 	cfg.Discovery.ServiceType = DefaultDiscoveryServiceType
 	cfg.Discovery.Subtypes = []string{"_chat-completions", "_responses", "_messages", "_generate-content", "_interactions"}
@@ -82,6 +83,10 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	cfg.Pprof.Addr = strings.TrimSpace(cfg.Pprof.Addr)
 	if cfg.Pprof.Addr == "" {
 		cfg.Pprof.Addr = DefaultPprofAddr
+	}
+
+	if errArchive := cfg.NormalizeArchiveConfig(); errArchive != nil {
+		return nil, errArchive
 	}
 
 	if cfg.LogsMaxTotalSizeMB < 0 {

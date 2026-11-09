@@ -63,6 +63,10 @@ type Config struct {
 	// Pprof config controls the optional pprof HTTP debug server.
 	Pprof PprofConfig `yaml:"pprof" json:"pprof"`
 
+	// Archive configures the conversation archive write-ahead log. It is a
+	// top-level section in both the legacy and the v8 layout.
+	Archive ArchiveConfig `yaml:"archive" json:"archive"`
+
 	// Discovery configures local network mDNS / DNS-SD service advertising.
 	Discovery DiscoveryConfig `yaml:"discovery" json:"discovery"`
 
