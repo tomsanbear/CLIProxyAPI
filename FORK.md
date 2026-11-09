@@ -27,5 +27,6 @@ Not chosen yet. The owner picks it from `tkt rollup --tag cache-hit-rate`.
 - [How the proxy works](fork/context/how-it-works.md): request path, session affinity, native passthrough versus cloaking, what the proxy changes in a request.
 - [Log evidence, 2026-11-08](fork/context/log-evidence-2026-11-08.md): affinity outcomes and failover causes measured from the live proxy logs.
 - [Docs audit, 2026-11-08](fork/context/docs-audit-2026-11-08.md): the proxy checked against the current Anthropic API docs and the Claude Code 2.1.319 binary.
+- [Conversation archive design, 2026-11-09](fork/proposals/conversation-archive-2026-11-09.html): every turn through the proxy recorded to a ring-buffered WAL, archived as Vortex in R2 by the Rust `cliproxyapi-archiver`, queried with DataFusion. Tickets tagged `archive`.
 
 Put background that several tickets share in `fork/context/`, and date files that record a point-in-time observation.

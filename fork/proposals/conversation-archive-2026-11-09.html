@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversation Archive Proposal</title>
+<style>
+/* Layout: one reading column, figures break out to 960px. Monochrome; the only non-grey ink marks the failure path in the dedupe comparison. */
+:root{
+  --bg:#ffffff; --fg:#111111; --muted:#5f5f5f; --rule:#d9d9d9; --panel:#f4f4f4; --ink:#111111;
+  --mono:"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){--bg:#111111;--fg:#ededed;--muted:#9a9a9a;--rule:#2e2e2e;--panel:#1a1a1a;--ink:#ededed;color-scheme:dark}
+}
+:root[data-theme="dark"]{--bg:#111111;--fg:#ededed;--muted:#9a9a9a;--rule:#2e2e2e;--panel:#1a1a1a;--ink:#ededed;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg)}
+body{font:15px/1.55 var(--sans);padding-block:48px 96px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{max-width:720px;margin:0 auto}
+h1{font-size:28px;line-height:1.2;font-weight:600;letter-spacing:-.01em;margin:0 0 8px;text-wrap:balance}
+h2{font-size:18px;font-weight:600;margin:56px 0 12px;padding-top:16px;border-top:1px solid var(--rule);text-wrap:balance}
+h3{font-size:15px;font-weight:600;margin:28px 0 8px}
+p{margin:0 0 12px}
+.meta{color:var(--muted);font-size:13px;margin-bottom:40px}
+.lede{font-size:17px;line-height:1.5;color:var(--fg)}
+ul,ol{padding-left:22px;margin:0 0 12px}
+li{margin:4px 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);padding:1px 4px;border-radius:2px}
+pre{font-family:var(--mono);font-size:12.5px;line-height:1.5;background:var(--panel);padding:14px 16px;overflow-x:auto;margin:12px 0 16px}
+pre code{background:none;padding:0}
+figure{margin:20px 0 28px;width:min(960px,100%);position:relative;left:50%;transform:translateX(-50%)}
+figure svg{display:block;width:100%;height:auto;color:var(--ink)}
+figure .wrap{overflow-x:auto}
+figure svg{min-width:600px}
+figcaption{font-size:13px;color:var(--muted);margin-top:8px;max-width:720px;margin-left:auto;margin-right:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px;margin:12px 0 16px}
+th,td{text-align:left;vertical-align:top;padding:8px 10px 8px 0;border-bottom:1px solid var(--rule)}
+th{font-weight:600;color:var(--muted);font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+td.num{font-variant-numeric:tabular-nums;text-align:right;padding-right:16px;white-space:nowrap}
+.tbl{overflow-x:auto}
+dl{margin:0 0 12px;display:grid;grid-template-columns:max-content 1fr;column-gap:20px;row-gap:6px}
+dt{color:var(--muted)}
+dd{margin:0}
+.rec{display:inline-block;font-size:11px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--fg);padding:0 5px;border-radius:2px;margin-left:6px;vertical-align:1px}
+.note{border-left:2px solid var(--fg);padding:2px 0 2px 14px;margin:16px 0}
+@media (max-width:640px){dl{grid-template-columns:1fr}dt{margin-top:8px}}
+</style>
+</head>
+<body>
+<main>
+<h1>Conversation archive: every agent turn, as Vortex in R2</h1>
+<p class="meta">Design record · decided 2026-11-09 · CLIProxyAPI fork <code>local/maintained</code> + new repo <code>cliproxyapi-archiver</code></p>
+
+<p class="lede">Record every request and response that passes through the proxy as an audit log you own, store it in Vortex files in a Cloudflare R2 bucket, and query it with DataFusion. The proxy stays dumb and fast: it writes raw records to a local ring-buffered write-ahead log. A Rust daemon does the parsing, deduplication, Vortex writing, upload and querying.</p>
+
+<h2>Decisions</h2>
+<dl>
+  <dt>Scope</dt><dd>Proxy traffic only. Every agent routed through the proxy, provider-agnostic. Harness-local transcripts are out.</dd>
+  <dt>Fidelity</dt><dd>Raw bodies as the agent sent and received them. Structure is recovered by byte-exact slicing, never by re-serializing, so parsing is additive and the original bytes always come back.</dd>
+  <dt>Stack</dt><dd>DataFusion is the query engine; Vortex writing and querying live in Rust. Go has no production-grade Vortex writer.</dd>
+  <dt>Boundary</dt><dd>Proxy appends raw frames to a local WAL; a separate Rust archiver drains it to R2. No links or dedupe in the WAL; no cgo; no network in the proxy hot path.</dd>
+  <dt>Dedupe</dt><dd>In the Rust archiver: slice <code>system</code>, <code>tools</code> and each message, hash with blake3, store each unique slice once in a <code>blobs</code> table, store the turn as skeleton + ordered hashes. Raw fallback when the splitter declines.</dd>
+  <dt>WAL</dt><dd>Ring buffer of 16 × 64 MB zstd segments (1 GB). Segments roll at 64 MB or 15 minutes with fsync. When full, the proxy drops the oldest segment and counts it. The archiver drains oldest-first, newest-first above a high-water mark of 12 segments.</dd>
+  <dt>R2 access</dt><dd>Static R2 API token scoped to one bucket, object read/write only, stored in a new <code>archive</code> section of the proxy config and editable in the management panel. The archiver reads the same config.</dd>
+  <dt>Encryption</dt><dd>R2 SSE-C with an AES-256 key we hold, in the same config section; Cloudflare keeps no copy. Switch to Vortex segment encryption when <a href="https://github.com/vortex-data/vortex/pull/10968">vortex-data/vortex#10968</a> ships; the schema does not change. The proxy's own access key is never archived, only its SHA-256.</dd>
+  <dt>Code</dt><dd>Go capture and WAL writer in the proxy fork. Rust archiver in a new repo, <code>tomsanbear/cliproxyapi-archiver</code>, with its own ticketsplease board. The WAL frame spec is versioned in both repos with shared golden fixtures.</dd>
+  <dt>Failure</dt><dd>The proxy never blocks a request for the archive. Drops are counted and shown in the management panel with ring depth and last successful upload.</dd>
+</dl>
+
+<h2>Pipeline</h2>
+<figure>
+<div class="wrap">
+<svg viewBox="0 0 960 330" role="img" aria-label="Agents send requests to the Go proxy; the proxy appends raw records to a local write-ahead log; the Rust archiver reads the log, dedupes, writes Vortex files to R2, then deletes consumed segments; a query CLI reads R2 through DataFusion." xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="12">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+  <g fill="none" stroke="currentColor" stroke-width="1.2">
+    <rect x="20" y="60" width="130" height="80" rx="2"/>
+    <rect x="210" y="40" width="170" height="120" rx="2"/>
+    <rect x="440" y="60" width="140" height="80" rx="2"/>
+    <rect x="640" y="40" width="170" height="120" rx="2"/>
+    <rect x="850" y="60" width="90" height="80" rx="2"/>
+    <rect x="640" y="230" width="170" height="70" rx="2"/>
+  </g>
+  <g fill="currentColor">
+    <text x="85" y="88" text-anchor="middle" font-weight="600">Agents</text>
+    <text x="85" y="106" text-anchor="middle" fill-opacity=".7">Claude Code, SDK,</text>
+    <text x="85" y="122" text-anchor="middle" fill-opacity=".7">other harnesses</text>
+
+    <text x="295" y="66" text-anchor="middle" font-weight="600">CLIProxyAPI (Go)</text>
+    <text x="295" y="88" text-anchor="middle" fill-opacity=".7">inbound body + headers</text>
+    <text x="295" y="104" text-anchor="middle" fill-opacity=".7">downstream response, lossless</text>
+    <text x="295" y="120" text-anchor="middle" fill-opacity=".7">usage record (session, account,</text>
+    <text x="295" y="136" text-anchor="middle" fill-opacity=".7">tokens, latency), joined on request id</text>
+
+    <text x="510" y="88" text-anchor="middle" font-weight="600">Local WAL</text>
+    <text x="510" y="106" text-anchor="middle" fill-opacity=".7">raw frames, zstd segments</text>
+    <text x="510" y="122" text-anchor="middle" fill-opacity=".7">fsync on roll</text>
+
+    <text x="725" y="66" text-anchor="middle" font-weight="600">Archiver (Rust, launchd)</text>
+    <text x="725" y="88" text-anchor="middle" fill-opacity=".7">split + hash + dedupe</text>
+    <text x="725" y="104" text-anchor="middle" fill-opacity=".7">Arrow batches</text>
+    <text x="725" y="120" text-anchor="middle" fill-opacity=".7">Vortex writer</text>
+    <text x="725" y="136" text-anchor="middle" fill-opacity=".7">object_store upload</text>
+
+    <text x="895" y="96" text-anchor="middle" font-weight="600">R2</text>
+    <text x="895" y="114" text-anchor="middle" fill-opacity=".7">.vortex files</text>
+
+    <text x="725" y="258" text-anchor="middle" font-weight="600">archiver query</text>
+    <text x="725" y="278" text-anchor="middle" fill-opacity=".7">DataFusion + vortex-datafusion</text>
+  </g>
+  <g stroke="currentColor" stroke-width="1.2" fill="none" marker-end="url(#a)">
+    <line x1="150" y1="100" x2="208" y2="100"/>
+    <line x1="380" y1="100" x2="438" y2="100"/>
+    <line x1="580" y1="100" x2="638" y2="100"/>
+    <line x1="810" y1="100" x2="848" y2="100"/>
+    <path d="M895,140 L895,265 L812,265"/>
+  </g>
+  <g stroke="currentColor" stroke-width="1.2" fill="none" stroke-dasharray="4 4" marker-end="url(#a)">
+    <path d="M640,150 L560,150 L560,142"/>
+  </g>
+  <g fill="currentColor" font-size="11">
+    <text x="179" y="92" text-anchor="middle">HTTPS</text>
+    <text x="409" y="92" text-anchor="middle">append</text>
+    <text x="609" y="92" text-anchor="middle">drain</text>
+    <text x="829" y="92" text-anchor="middle">put</text>
+    <text x="600" y="168" text-anchor="middle">delete segment after upload confirmed</text>
+    <text x="895" y="200" text-anchor="middle">range reads</text>
+  </g>
+</svg>
+</div>
+<figcaption>Only the archiver talks to R2. The proxy's work ends at a local file append; the WAL is a 1 GB ring of segments, so a stopped or slow archiver costs nothing until the ring is full, and then costs the oldest segment first.</figcaption>
+</figure>
+
+<h3>In the proxy</h3>
+<ul>
+  <li><strong>Inbound body</strong> is already captured after auth by <code>CaptureAuthenticatedRequestBody</code> (<code>internal/api/middleware/request_logging.go:127</code>). We reuse that capture and never read the body twice.</li>
+  <li><strong>Downstream response</strong>: the existing request-log path drops stream chunks when its 100-slot channel fills (<code>response_writer.go:119</code>). The archive taps the synchronous writers instead, <code>ForwardStream.WriteChunk</code> and <code>forwardClaudeStreamWithState</code>, which see every byte including synthesized error frames, and buffers in memory per request.</li>
+  <li><strong>Metadata</strong> comes from the usage record (<code>sdk/cliproxy/usage/manager.go:26</code>): session and parent session, account id, provider, model, status, latency, TTFT, input/output tokens, cache read and creation tokens with the 5m/1h split. A usage plugin joins it to the captured bodies on the gin request id (<code>TraceID</code>), and a turn record is emitted once both halves are present or the request finishes with an error.</li>
+  <li><strong>WAL format</strong>: a directory of numbered segment files (<code>seg-000000123.zst</code>), each a zstd stream of length-prefixed frames, one frame per turn. Segments roll at 64 MB or 15 minutes with fsync on roll. A crash leaves at most a truncated tail frame, which the reader skips. The directory listing is the only index. The WAL is a new <code>archive</code> config section and a runtime component shaped like <code>sdk/cliproxy/pprof_server.go</code>: started in <code>Service.Run</code>, flushed in <code>Shutdown</code>, hot-reloadable.</li>
+  <li><strong>Ring buffer</strong>: at most 16 completed segments. On roll, if 16 exist, the proxy unlinks the lowest-numbered one and counts the drop. Unlinking an open file is safe: an archiver mid-read finishes from its descriptor and the data is archived anyway. Both sides ignore <code>ENOENT</code>; there is one writer and one reader, so no locking.</li>
+  <li><strong>Hot path cost</strong>: one memory copy of a body the proxy already holds, then a buffered file append. Bounded by a size cap per record (same 32 MiB as request-log). A write error drops the record with a counter; no request ever waits on the archive.</li>
+</ul>
+
+<h2>Why the raw volume is large, and what to do about it</h2>
+<p>Every API call resends the whole conversation. Two things repeat on each call: the static prefix (Claude Code's system prompt plus tool schemas, roughly 50–80 KB), and the growing message history. Each tool call is its own round trip, so a session with 200 tool calls makes 200 requests, and the last one carries everything before it. The new bytes per turn are one assistant message and one tool result, usually 1–10 KB, plus the response.</p>
+
+<figure>
+<div class="wrap">
+<svg viewBox="0 0 960 300" role="img" aria-label="Line chart. Cumulative bytes stored for one 200-turn session: storing full raw bodies grows quadratically to about 72 MB; the unique content grows linearly to about 1 MB." xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="12">
+  <g stroke="currentColor" stroke-opacity=".18" stroke-width="1">
+    <line x1="60" y1="240" x2="900" y2="240"/><line x1="60" y1="185" x2="900" y2="185"/><line x1="60" y1="130" x2="900" y2="130"/><line x1="60" y1="75" x2="900" y2="75"/><line x1="60" y1="20" x2="900" y2="20"/>
+  </g>
+  <g fill="currentColor" fill-opacity=".7" font-size="11" text-anchor="end">
+    <text x="50" y="244">0</text><text x="50" y="189">20 MB</text><text x="50" y="134">40 MB</text><text x="50" y="79">60 MB</text><text x="50" y="24">80 MB</text>
+  </g>
+  <g fill="currentColor" fill-opacity=".7" font-size="11" text-anchor="middle">
+    <text x="60" y="262">0</text><text x="270" y="262">50</text><text x="480" y="262">100</text><text x="690" y="262">150</text><text x="900" y="262">200 turns</text>
+  </g>
+  <polyline fill="none" stroke="currentColor" stroke-width="2" points="60,240 165,235 270,221 375,205 480,182 585,155 690,122 795,84 900,41"/>
+  <polyline fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="5 4" points="60,240 900,237"/>
+  <g fill="currentColor">
+    <text x="820" y="36" text-anchor="end" font-weight="600">full raw body per turn: 72 MB</text>
+    <text x="820" y="226" text-anchor="end" font-weight="600">unique content: 1.1 MB</text>
+  </g>
+  <text x="480" y="292" text-anchor="middle" fill="currentColor" fill-opacity=".7" font-size="11">assumed: 60 KB static prefix, +3 KB of new history per turn, 2 KB response; estimates, not measurements</text>
+</svg>
+</div>
+<figcaption>One session, cumulative bytes if every turn's raw body is stored, versus the bytes that are new on each turn. The gap is the resent history. Growth per session is quadratic in turns; the archive as a whole grows linearly with calls.</figcaption>
+</figure>
+
+<p>Across the ~17k calls a week the logs show, that is roughly 2–8 GB a week raw before compression, against perhaps 100–200 MB of genuinely new content. Vortex's column encodings will not recover the difference reliably: they work within a column chunk, and these are multi-kilobyte repeats scattered across rows and files. The fix is a small amount of <em>structural</em> parsing.</p>
+
+<h3>Structural, byte-exact dedupe</h3>
+<ol>
+  <li>Tokenize each request body only far enough to find the boundaries of the parts that repeat: for the Claude format <code>system</code>, <code>tools</code> and each <code>messages[i]</code>; for OpenAI chat <code>messages[i]</code> and <code>tools</code>; for Responses <code>instructions</code> and <code>input[i]</code>; for Gemini <code>systemInstruction</code>, <code>tools</code> and <code>contents[i]</code>.</li>
+  <li>Slice the original bytes at those boundaries. Nothing is re-serialized or canonicalized.</li>
+  <li>Hash each slice (blake3). Store each unique slice once in a <code>blobs</code> table. Store the turn as the body skeleton plus the ordered list of hashes, so the exact original bytes come back by concatenation.</li>
+  <li>Anything the splitter cannot handle, such as an unknown format, malformed JSON or a non-JSON body, is stored whole as raw. No interpretation of content means no parser gap can lose data.</li>
+  <li>Responses are unique per turn and stay raw.</li>
+</ol>
+<p>This also produces the per-message table you would want for analysis anyway, which is a better "parsed subset" than hand-picked columns.</p>
+
+<h2>Why the dedupe runs in the archiver</h2>
+<p>Deduplication is stateful: whoever does it must know which blobs are already durably stored. Putting it in the proxy would create a consistency dependency from R2 back into the proxy's index; the raw WAL avoids that at the cost of local disk, which the ring bounds at 1 GB.</p>
+
+<figure>
+<div class="wrap">
+<svg viewBox="0 0 960 400" role="img" aria-label="Two options compared. Option A: the Go proxy dedupes before writing the WAL and must keep a durable hash index consistent with what the archiver has uploaded; a lost segment leaves turns pointing at blobs that were never stored. Option B: the Go proxy writes raw frames; the Rust archiver splits and dedupes and writes blobs and turns together, so the index and the data are always written in the same step." xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="12">
+  <defs>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+    <marker id="bx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/></marker>
+  </defs>
+  <!-- Option A -->
+  <text x="20" y="24" fill="currentColor" font-weight="600">A. Dedupe in the Go proxy, before the WAL</text>
+  <g fill="none" stroke="currentColor" stroke-width="1.2">
+    <rect x="20" y="50" width="200" height="110" rx="2"/>
+    <rect x="300" y="60" width="150" height="60" rx="2"/>
+    <rect x="530" y="60" width="170" height="60" rx="2"/>
+    <rect x="780" y="60" width="160" height="60" rx="2"/>
+    <rect x="40" y="118" width="160" height="30" rx="2" stroke-dasharray="3 3"/>
+  </g>
+  <g fill="currentColor">
+    <text x="120" y="76" text-anchor="middle" font-weight="600">Proxy</text>
+    <text x="120" y="96" text-anchor="middle" fill-opacity=".7">split, hash, lookup</text>
+    <text x="120" y="138" text-anchor="middle" font-size="11">durable hash index</text>
+    <text x="375" y="84" text-anchor="middle" font-weight="600">WAL</text>
+    <text x="375" y="102" text-anchor="middle" fill-opacity=".7">skeleton + hashes</text>
+    <text x="615" y="84" text-anchor="middle" font-weight="600">Archiver</text>
+    <text x="615" y="102" text-anchor="middle" fill-opacity=".7">write what it is given</text>
+    <text x="860" y="84" text-anchor="middle" font-weight="600">R2</text>
+    <text x="860" y="102" text-anchor="middle" fill-opacity=".7">blobs + turns</text>
+  </g>
+  <g stroke="currentColor" stroke-width="1.2" fill="none" marker-end="url(#b)">
+    <line x1="220" y1="90" x2="298" y2="90"/>
+    <line x1="450" y1="90" x2="528" y2="90"/>
+    <line x1="700" y1="90" x2="778" y2="90"/>
+  </g>
+  <g stroke="#c0392b" stroke-width="1.4" fill="none" stroke-dasharray="5 4" marker-end="url(#bx)">
+    <path d="M860,120 L860,175 L120,175 L120,150"/>
+  </g>
+  <text x="490" y="192" text-anchor="middle" fill="#c0392b" font-size="11">index must stay consistent with R2 across restarts and lost segments; a mismatch leaves turns pointing at blobs that were never stored</text>
+
+  <!-- Option B -->
+  <text x="20" y="236" fill="currentColor" font-weight="600">B. Raw WAL, dedupe in the Rust archiver</text>
+  <g fill="none" stroke="currentColor" stroke-width="1.2">
+    <rect x="20" y="262" width="200" height="60" rx="2"/>
+    <rect x="300" y="262" width="150" height="60" rx="2"/>
+    <rect x="530" y="252" width="170" height="110" rx="2"/>
+    <rect x="780" y="262" width="160" height="60" rx="2"/>
+    <rect x="550" y="320" width="130" height="30" rx="2" stroke-dasharray="3 3"/>
+  </g>
+  <g fill="currentColor">
+    <text x="120" y="288" text-anchor="middle" font-weight="600">Proxy</text>
+    <text x="120" y="306" text-anchor="middle" fill-opacity=".7">append raw frame</text>
+    <text x="375" y="288" text-anchor="middle" font-weight="600">WAL</text>
+    <text x="375" y="306" text-anchor="middle" fill-opacity=".7">raw bodies, transient</text>
+    <text x="615" y="278" text-anchor="middle" font-weight="600">Archiver</text>
+    <text x="615" y="298" text-anchor="middle" fill-opacity=".7">split, hash, dedupe, write</text>
+    <text x="615" y="340" text-anchor="middle" font-size="11">hash index, same process</text>
+    <text x="860" y="288" text-anchor="middle" font-weight="600">R2</text>
+    <text x="860" y="306" text-anchor="middle" fill-opacity=".7">blobs + turns, one step</text>
+  </g>
+  <g stroke="currentColor" stroke-width="1.2" fill="none" marker-end="url(#b)">
+    <line x1="220" y1="292" x2="298" y2="292"/>
+    <line x1="450" y1="292" x2="528" y2="292"/>
+    <line x1="700" y1="292" x2="778" y2="292"/>
+  </g>
+  <text x="490" y="388" text-anchor="middle" fill="currentColor" fill-opacity=".7" font-size="11">index and data are written by the same process in the same step; the whole pipeline is replayable from the raw WAL</text>
+</svg>
+</div>
+<figcaption>The one edge that differs: in A, a consistency dependency runs backwards from R2 into the proxy's index. In B there is none; the WAL is raw and disposable, and the cost is local disk measured in tens of megabytes.</figcaption>
+</figure>
+
+<div class="tbl"><table>
+<tr><th></th><th>A. Go dedupes</th><th>B. Rust dedupes <span class="rec">chosen</span></th></tr>
+<tr><td>WAL size on disk</td><td>Small</td><td>Raw; a busy hour is a few hundred MB, ring-capped at 1 GB (8 GB/week is ~13 KB/s)</td></tr>
+<tr><td>Correctness risk</td><td>Proxy's hash index must match what was persisted to R2; any gap is silent data loss</td><td>None of that kind; index and blobs written together, replay from raw if anything is wrong</td></tr>
+<tr><td>Code in the hot-path process</td><td>JSON tokenizer, hashing, durable index, format knowledge</td><td>A file append</td></tr>
+<tr><td>Where format knowledge lives</td><td>Go and Rust both</td><td>Rust only</td></tr>
+<tr><td>Testability</td><td>Cross-process invariants</td><td>Pure functions over bytes, golden tests per format</td></tr>
+</table></div>
+
+<h2>Data model on R2</h2>
+<pre><code>s3://&lt;bucket&gt;/&lt;prefix&gt;/
+  turns/dt=2026-11-09/turns-2026-11-09T14-00-00Z-&lt;seq&gt;.vortex
+  blobs/dt=2026-11-09/blobs-2026-11-09T14-00-00Z-&lt;seq&gt;.vortex
+  _manifest/   (archiver state: last WAL segment consumed per host, file list, schema version)</code></pre>
+
+<div class="tbl"><table>
+<tr><th>turns</th><th>type</th><th>source</th></tr>
+<tr><td><code>request_id</code>, <code>attempt</code></td><td>utf8, u16</td><td>gin request id; attempt from usage record</td></tr>
+<tr><td><code>ts</code>, <code>latency_ms</code>, <code>ttft_ms</code></td><td>timestamp, u32, u32</td><td>usage record</td></tr>
+<tr><td><code>session_id</code>, <code>parent_session_id</code>, <code>agent_id</code></td><td>utf8</td><td>session extraction (already computed for affinity)</td></tr>
+<tr><td><code>client</code>, <code>client_version</code>, <code>caller_key_sha256</code></td><td>utf8</td><td>user agent, access key hash (never the key)</td></tr>
+<tr><td><code>provider</code>, <code>model</code>, <code>upstream_model</code>, <code>account_id</code></td><td>utf8</td><td>usage record</td></tr>
+<tr><td><code>status</code>, <code>error_code</code>, <code>stop_reason</code></td><td>u16, utf8, utf8</td><td>response</td></tr>
+<tr><td><code>input_tokens</code>, <code>output_tokens</code>, <code>cache_read_tokens</code>, <code>cache_write_5m</code>, <code>cache_write_1h</code></td><td>u32</td><td>usage detail</td></tr>
+<tr><td><code>request_format</code>, <code>request_skeleton</code>, <code>request_parts</code></td><td>utf8, binary, list&lt;binary&gt;</td><td>splitter: skeleton with placeholders, ordered blob hashes</td></tr>
+<tr><td><code>request_raw</code></td><td>binary, nullable</td><td>whole body when the splitter declined</td></tr>
+<tr><td><code>response_raw</code>, <code>response_is_sse</code></td><td>binary, bool</td><td>downstream bytes as delivered</td></tr>
+<tr><td><code>schema_version</code></td><td>u16</td><td>archiver</td></tr>
+</table></div>
+
+<div class="tbl"><table>
+<tr><th>blobs</th><th>type</th><th>notes</th></tr>
+<tr><td><code>hash</code></td><td>binary(32)</td><td>blake3 of the exact slice</td></tr>
+<tr><td><code>kind</code></td><td>utf8</td><td>system, tool, message, instructions, content …</td></tr>
+<tr><td><code>role</code></td><td>utf8, nullable</td><td>read without parsing the slice (first key only)</td></tr>
+<tr><td><code>bytes</code></td><td>binary</td><td>the slice</td></tr>
+<tr><td><code>first_seen</code>, <code>first_request_id</code></td><td>timestamp, utf8</td><td></td></tr>
+</table></div>
+
+<p>Schema evolution: new columns are added as nullable; DataFusion merges file schemas on read, so old files simply have nulls. A type change is a new column name, never a redefinition, because <code>Schema::try_merge</code> rejects type conflicts. <code>schema_version</code> on each row records which writer produced it.</p>
+
+<p>Sizing: one <code>turns</code> file and one <code>blobs</code> file per hour of activity, so a day is at most 48 files and a year a few thousand; DataFusion's listing handles that without a catalog. If it ever matters, Vortex is heading into Iceberg and the files move as-is.</p>
+
+<h2>Querying</h2>
+<p>The archiver binary doubles as the query tool: <code>cliproxyapi-archiver query 'SELECT …'</code> registers <code>turns</code> and <code>blobs</code> as DataFusion ListingTables over the R2 prefix via <code>vortex-datafusion</code>, with a <code>reassemble(request_skeleton, request_parts)</code> scalar UDF that returns the original bytes. The S3 client carries the SSE-C key, so reads are transparent. A local cache of recently read files avoids re-fetching. Because it is plain DataFusion, anything else you write in Rust can embed the same SessionContext.</p>
+
+<h2>Encryption</h2>
+<p>Vortex's own encryption is designed but not shipped: the file footer reserves <code>encryption_specs</code> and a per-segment index, documented as unused, and the implementation is <a href="https://github.com/vortex-data/vortex/pull/10968">PR #10968</a> (segment-level AES-GCM, <code>KeyRetriever</code>), open as of 2026-11-09 against 0.93.0. Until it lands, the archive uses R2 server-side encryption with a customer-provided AES-256 key (SSE-C): every put, get and multipart step carries the key, Cloudflare stores no recoverable copy, and <code>object_store</code> 0.13 already supports it (<code>sse_customer_key_base64</code>). Compression, dedupe and schema are unaffected, so moving to Vortex-native encryption later is a writer and reader option, not a migration.</p>
+
+<h2>Work breakdown</h2>
+<p>Each row is a ticketsplease ticket: 1–3 in the proxy repo, 4–7 in <code>cliproxyapi-archiver</code>, 8–9 in both.</p>
+<ol>
+  <li><strong>WAL frame spec</strong> (both repos): frame layout, header fields, segment naming and ring rules, zstd framing, truncated-tail rule, version byte. Golden fixtures shared by the Go writer and Rust reader.</li>
+  <li><strong>Proxy capture</strong> (<code>claude/executor</code>, <code>usage</code>, new <code>archive</code> scope): lossless response tap, request-id join of body and usage record, turn assembly, credential stripping, size cap.</li>
+  <li><strong>Proxy WAL writer + config</strong>: <code>archive</code> config section (spool dir, ring size, R2 endpoint/bucket/prefix/token, SSE-C key), ring-buffered segment writer with start/flush/reload, drop counters, management-panel settings and status.</li>
+  <li><strong>Archiver: WAL reader</strong>: segment discovery, frame decode, oldest-first drain with newest-first above high-water, delete after confirmed upload.</li>
+  <li><strong>Archiver: splitter</strong>: byte-exact structural slicing per format, blake3, skeleton encoding, raw fallback, reassembly, golden tests from real captured bodies.</li>
+  <li><strong>Archiver: Vortex writer + upload</strong>: Arrow schema, hourly roll by row timestamp, <code>object_store</code> S3 client against R2 with SSE-C, idempotent uploads, manifest.</li>
+  <li><strong>Archiver: query CLI</strong>: DataFusion context, ListingTables, <code>reassemble</code> UDF, a few saved queries (turns per session, cache hit rate per account, cost per day).</li>
+  <li><strong>Deployment</strong>: launchd service for the archiver, log rotation, a health check in the management panel showing spool depth and last upload time.</li>
+  <li><strong>Verification</strong>: run both for a day, then prove round-trip: for a sample of request ids, <code>reassemble</code> equals the bytes the proxy logged; row counts match proxy request counts; cache hit rate from the archive matches the measurement ticket already planned.</li>
+</ol>
+
+<div class="note">
+<p>One thing this also buys: the <code>measure-cache-hit-rate</code> ticket on the board becomes a query over this archive rather than a separate logging feature.</p>
+</div>
+
+<h2>Order of work</h2>
+<p>The WAL frame spec first, since both sides build against it. Then the proxy capture and writer, so real traffic starts filling the ring while the archiver is built. Then the archiver reader, splitter and writer, verified against the frames the proxy has already produced. The query CLI and deployment last.</p>
+</main>
+</body>
+</html>

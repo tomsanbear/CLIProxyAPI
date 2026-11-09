@@ -56,6 +56,7 @@ backend = "none"
 "usage" = ["internal/runtime/executor/helps/usage_*.go", "sdk/cliproxy/usage/**"]
 "clienterror" = ["internal/clienterror/**"]
 "config" = ["internal/config/**", "config.example.yaml"]
+"archive" = ["internal/archive/**", "sdk/cliproxy/archive*.go", "docs/archive-wal-format.md"]
 
 # Optionally map a scope to its owning crate so the Rust backend can expand
 # reverse-dependents (requires `cargo` at runtime).
