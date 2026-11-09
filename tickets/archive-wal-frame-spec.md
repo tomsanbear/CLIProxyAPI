@@ -1,7 +1,7 @@
 ---
 id: archive-wal-frame-spec
 title: Specify the archive WAL segment and frame format shared with cliproxyapi-archiver
-status: review
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [archive]
 shared_scopes: [project/tickets]
 paths: []
 tags: [archive, spec]
-claimed_from: todo
-assignee: claude
-lease_expires_at: 1794248320
 ---
 ## Goal
 
