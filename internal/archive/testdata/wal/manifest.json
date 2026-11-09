@@ -1,0 +1,108 @@
+{
+  "v": 1,
+  "segments": {
+    "seg-000000000001.wal": {
+      "stats": {
+        "frames": 3,
+        "unknown_version": 0,
+        "crc_mismatch": 0,
+        "bad_record": 0,
+        "truncated_tail": false,
+        "corrupt": false
+      },
+      "records": [
+        {
+          "request_id": "0f1e2d3c-0001-4000-8000-000000000001",
+          "attempt": 1,
+          "format": "claude",
+          "meta_sha256": "b87f5ba006a3c28afa8a7dcbc0ee0551fe5b1db045ca908efd60847b1283e869",
+          "request_sha256": "b396ffb3e9297f12f03897c69eb18f8cdf18831c4fbfa9e5b1c56a839c278fa7",
+          "response_sha256": "37ea00288ef32086f93fba4ecfeb760eb6aba5d258ce6b604bf2be5f9ff39b6d"
+        },
+        {
+          "request_id": "0f1e2d3c-0002-4000-8000-000000000002",
+          "attempt": 1,
+          "format": "openai-chat",
+          "meta_sha256": "48508e5c85d2526b99ce0511216bf823663f9f0485d1063dfe5dac6e795124a3",
+          "request_sha256": "ca98373bda3141d243b4c8db2fe6c82f656f389fcaed0a80651e27fbec864903",
+          "response_sha256": "5f81d4bd2f60c91512c096830cf18046c384a414db8e088faf63f4f1946ff36f"
+        },
+        {
+          "request_id": "0f1e2d3c-0003-4000-8000-000000000003",
+          "attempt": 1,
+          "format": "gemini",
+          "meta_sha256": "64302325ecd9b59c183494b2fd84ba2e06cf95bfc99047f8482e906190a9a79e",
+          "request_sha256": "2bbb3aad087d822f04053cc2f1be2a03aee378d51d4fb3118f0fe13a52167d07",
+          "response_sha256": "88327a8e46ca1a02594c5feefbfbebfa71f2105e3ed10f3f652f94d5da0563c9"
+        }
+      ]
+    },
+    "seg-000000000002.wal": {
+      "stats": {
+        "frames": 3,
+        "unknown_version": 0,
+        "crc_mismatch": 0,
+        "bad_record": 0,
+        "truncated_tail": true,
+        "corrupt": false
+      },
+      "records": [
+        {
+          "request_id": "0f1e2d3c-0005-4000-8000-000000000005",
+          "attempt": 1,
+          "format": "claude",
+          "meta_sha256": "9f0c5866c5a9e2d8d0b7f30fdc7c583a34e4eed61eeb757a762296f77e9230e9",
+          "request_sha256": "b396ffb3e9297f12f03897c69eb18f8cdf18831c4fbfa9e5b1c56a839c278fa7",
+          "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "request_id": "0f1e2d3c-0005-4000-8000-000000000005",
+          "attempt": 2,
+          "format": "claude",
+          "meta_sha256": "949a4d3aa81091175061ec04d0b7d9571c7f7729237130d2ebf5d03058ab73de",
+          "request_sha256": "b396ffb3e9297f12f03897c69eb18f8cdf18831c4fbfa9e5b1c56a839c278fa7",
+          "response_sha256": "37ea00288ef32086f93fba4ecfeb760eb6aba5d258ce6b604bf2be5f9ff39b6d"
+        },
+        {
+          "request_id": "0f1e2d3c-0004-4000-8000-000000000004",
+          "attempt": 1,
+          "format": "openai-responses",
+          "meta_sha256": "1932b2cca3f2e76274b7841243865028c02e10391d0c06d34aa843842b177cfe",
+          "request_sha256": "37cb860e21d685eb941275d05d72339da24516439cd7a5472a12f71b9e738bfe",
+          "response_sha256": "e9038ffef00bf55d6a1a48a9fe2c26c254431d9cb7a0760dc698aad6c7200896"
+        }
+      ]
+    },
+    "seg-000000000003.wal": {
+      "stats": {
+        "frames": 2,
+        "unknown_version": 1,
+        "crc_mismatch": 1,
+        "bad_record": 0,
+        "truncated_tail": false,
+        "corrupt": false
+      },
+      "records": [
+        {
+          "request_id": "0f1e2d3c-0001-4000-8000-000000000001",
+          "attempt": 1,
+          "format": "claude",
+          "meta_sha256": "b87f5ba006a3c28afa8a7dcbc0ee0551fe5b1db045ca908efd60847b1283e869",
+          "request_sha256": "b396ffb3e9297f12f03897c69eb18f8cdf18831c4fbfa9e5b1c56a839c278fa7",
+          "response_sha256": "37ea00288ef32086f93fba4ecfeb760eb6aba5d258ce6b604bf2be5f9ff39b6d"
+        },
+        {
+          "request_id": "0f1e2d3c-0004-4000-8000-000000000004",
+          "attempt": 1,
+          "format": "openai-responses",
+          "meta_sha256": "1932b2cca3f2e76274b7841243865028c02e10391d0c06d34aa843842b177cfe",
+          "request_sha256": "37cb860e21d685eb941275d05d72339da24516439cd7a5472a12f71b9e738bfe",
+          "response_sha256": "e9038ffef00bf55d6a1a48a9fe2c26c254431d9cb7a0760dc698aad6c7200896"
+        }
+      ]
+    }
+  },
+  "ignored": [
+    "seg-000000000004.wal.open"
+  ]
+}
