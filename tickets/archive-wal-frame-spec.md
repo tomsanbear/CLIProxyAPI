@@ -1,7 +1,7 @@
 ---
 id: archive-wal-frame-spec
 title: Specify the archive WAL segment and frame format shared with cliproxyapi-archiver
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: []
