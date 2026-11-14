@@ -331,13 +331,25 @@ func isClaudeFable51OnlyModel(model string) bool {
 	return false
 }
 
+// isClaudeFable52Model matches the released Fable 5.2 family, including dated
+// and context-window variants, without opting future minor versions into it.
+func isClaudeFable52Model(model string) bool {
+	model = claudeCanonicalModel(model)
+	for _, target := range []string{"claude-fable-5-2", "claude-fable-5.2"} {
+		if model == target || strings.HasPrefix(model, target+"-") || strings.HasPrefix(model, target+"[") {
+			return true
+		}
+	}
+	return false
+}
+
 // isClaudePreservedThinkingModel reports the models whose signed thinking
 // blocks Anthropic binds to the creation-time conversation prefix (system,
 // tools, and every earlier message). Replaying those blocks under a reshaped
 // prefix fails binding validation unless the request opts into dropping them.
 // See https://platform.claude.com/docs/en/build-with-claude/preserved-thinking
 func isClaudePreservedThinkingModel(model string) bool {
-	return isClaudeOpus55Model(model) || isClaudeSonnet55Model(model) || isClaudeHaiku55Model(model) || isClaudeFable51OnlyModel(model)
+	return isClaudeOpus55Model(model) || isClaudeSonnet55Model(model) || isClaudeHaiku55Model(model) || isClaudeFable51OnlyModel(model) || isClaudeFable52Model(model)
 }
 
 // claudeThinkingTypeAcceptsBlockBinding reports whether the body's thinking
@@ -432,10 +444,10 @@ func applyClaudePreservedThinkingBindingDoc(doc *ojson.Doc) bool {
 	return doc.Set("thinking.block_binding.prefix_mismatch_behavior", "drop_block") == nil
 }
 
-// claudeModelUsesProgressDisplay reports the 2.1.280 interactive CLI models that
-// send thinking.display=updates unless the caller already chose a display mode.
+// claudeModelUsesProgressDisplay reports models that support progress updates
+// and use thinking.display=updates unless the caller chose another display mode.
 func claudeModelUsesProgressDisplay(model string) bool {
-	return isClaudeOpus55Model(model) || isClaudeFable51Model(model) || isClaudeSonnet5Model(model) || isClaudeSonnet55Model(model)
+	return isClaudeOpus55Model(model) || isClaudeFable51Model(model) || isClaudeFable52Model(model) || isClaudeSonnet5Model(model) || isClaudeSonnet55Model(model)
 }
 
 // applyClaudeCloakThinkingDisplay fills the latest CLI display only when the
@@ -468,7 +480,7 @@ func applyClaudeCloakThinkingDisplayDoc(doc *ojson.Doc, callerOwned bool) bool {
 }
 
 func claudeModelHasPerTurnEffort(model string) bool {
-	return isClaudeOpus55Model(model) || strings.HasPrefix(claudeCanonicalModel(model), "claude-fable-5-1")
+	return isClaudeOpus55Model(model) || strings.HasPrefix(claudeCanonicalModel(model), "claude-fable-5-1") || isClaudeFable52Model(model)
 }
 
 // claudeModelHasPerTurnTiming reports models whose catalog lists per_turn_timing.

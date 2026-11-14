@@ -1,14 +1,17 @@
 ---
 id: archive-wal-writer-config
 title: Ring-buffered WAL writer, `archive` config section and management-panel status
-status: todo
+status: review
 priority: p1
 dependencies: [archive-wal-frame-spec]
 related: []
 scopes: [archive, config]
 shared_scopes: [fork/docs, project/tickets]
-paths: []
+paths: [sdk/cliproxy/service.go, sdk/cliproxy/service_lifecycle.go, internal/watcher/diff/config_diff.go, internal/watcher/diff/config_diff_archive_test.go]
 tags: [archive]
+claimed_from: todo
+assignee: opus-writer
+lease_expires_at: 1794250092
 ---
 ## Goal
 

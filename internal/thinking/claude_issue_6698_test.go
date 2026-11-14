@@ -93,6 +93,8 @@ func TestApplyThinking_ClaudeDisabledFallsBackOnAdaptiveOnlyModels(t *testing.T)
 		{model: "claude-fable-5[1m]", wantThinking: "adaptive", wantEffort: "low"},
 		{model: "claude-fable-5-1", wantThinking: "adaptive", wantEffort: "low"},
 		{model: "claude-fable-5-1[1m]", wantThinking: "adaptive", wantEffort: "low"},
+		{model: "claude-fable-5-2", wantThinking: "adaptive", wantEffort: "low"},
+		{model: "claude-fable-5-2[1m]", wantThinking: "adaptive", wantEffort: "low"},
 		{model: "claude-opus-5", wantThinking: "disabled"},
 		{model: "claude-sonnet-5", wantThinking: "disabled"},
 		{model: "claude-haiku-5-5", wantThinking: "disabled"},
@@ -183,6 +185,7 @@ func TestApplyThinking_ClaudeAdaptiveOnlyModelsConvertBudgetAndAuto(t *testing.T
 		"claude-opus-4-8",
 		"claude-fable-5",
 		"claude-fable-5-1",
+		"claude-fable-5-2",
 	}
 	for _, model := range adaptiveOnlyModels {
 		t.Run(model+"/native_budget_tokens", func(t *testing.T) {
